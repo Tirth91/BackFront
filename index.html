@@ -3,33 +3,82 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agora Test Call</title>
+  <title>Agora Debug Call with Grid</title>
   <style>
-    body { background: #111; color: white; text-align: center; font-family: sans-serif; }
-    video { width: 320px; height: 240px; border: 2px solid #0f0; margin: 10px; }
-    #log { background: #222; padding: 10px; margin-top: 10px; text-align: left; max-height: 200px; overflow-y: scroll; font-size: 0.9rem; }
+    body { background: #111; color: white; text-align: center; font-family: sans-serif; margin: 0; padding: 20px; }
+    h1 { color: #0f0; }
+    button {
+      padding: 10px 20px;
+      font-size: 1rem;
+      margin: 10px;
+      background: #0f0;
+      border: none;
+      color: #111;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover { background: #0c0; }
+    #status { margin-bottom: 10px; color: #0f0; }
+
+    #video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    .video-box {
+      background: #000;
+      border: 2px solid #0f0;
+      border-radius: 8px;
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      overflow: hidden;
+    }
+
+    .video-box video, .video-stream {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .label {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      background: rgba(0,0,0,0.6);
+      color: #0f0;
+      padding: 6px;
+      font-size: 0.9rem;
+    }
+
+    #log {
+      text-align: left;
+      margin-top: 20px;
+      background: #222;
+      padding: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
-  <h1>Agora Video Call Debug</h1>
-  <p>Status: <span id="status">Not joined</span></p>
+  <h1>🧪 Agora Video Debug</h1>
+  <div id="status">Not joined</div>
 
   <button onclick="joinCall()">Join Call</button>
   <button onclick="leaveCall()">Leave Call</button>
 
-  <div>
-    <h3>Local</h3>
-    <div id="local-player"></div>
-  </div>
-
-  <div>
-    <h3>Remote</h3>
-    <div id="remote-player"></div>
+  <div id="video-grid">
+    <!-- Local and remote videos will appear here -->
   </div>
 
   <div id="log"></div>
 
-  <!-- Agora SDK -->
   <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
   <script>
     const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
@@ -40,11 +89,32 @@
     let localTrack;
     const statusEl = document.getElementById("status");
     const logEl = document.getElementById("log");
+    const grid = document.getElementById("video-grid");
 
     function log(...args) {
       const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(" ");
       console.log(...args);
       logEl.innerHTML += `<div>${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function createVideoBox(id, label) {
+      const box = document.createElement("div");
+      box.className = "video-box";
+      box.id = `box-${id}`;
+
+      const container = document.createElement("div");
+      container.className = "video-stream";
+      container.id = id;
+
+      const tag = document.createElement("div");
+      tag.className = "label";
+      tag.id = `label-${id}`;
+      tag.textContent = label;
+
+      box.appendChild(container);
+      box.appendChild(tag);
+      grid.appendChild(box);
     }
 
     async function joinCall() {
@@ -55,7 +125,8 @@
         statusEl.textContent = "Joined";
 
         localTrack = await AgoraRTC.createCameraVideoTrack();
-        await localTrack.play("local-player");
+        createVideoBox("local", "You");
+        await localTrack.play("local");
         await client.publish([localTrack]);
 
         client.on("user-published", async (user, mediaType) => {
@@ -63,13 +134,17 @@
           await client.subscribe(user, mediaType);
           if (mediaType === "video") {
             const remoteId = `remote-${user.uid}`;
-            const remoteDiv = document.createElement("div");
-            remoteDiv.id = remoteId;
-            document.getElementById("remote-player").appendChild(remoteDiv);
+            createVideoBox(remoteId, `User ${user.uid}`);
             user.videoTrack.play(remoteId);
             log("Remote video started:", remoteId);
           }
         });
+
+        client.on("user-unpublished", (user) => {
+          const box = document.getElementById(`box-remote-${user.uid}`);
+          if (box) box.remove();
+        });
+
       } catch (err) {
         log("Join error:", err);
         statusEl.textContent = "Join failed: " + err.message;
@@ -83,8 +158,7 @@
           localTrack.stop();
           localTrack.close();
         }
-        document.getElementById("local-player").innerHTML = "";
-        document.getElementById("remote-player").innerHTML = "";
+        grid.innerHTML = "";
         statusEl.textContent = "Left call";
         log("Left the channel");
       } catch (err) {
