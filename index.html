@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agora Debug Call with Grid</title>
+  <title>Agora + Gesture Recognition</title>
   <style>
     body { background: #111; color: white; text-align: center; font-family: sans-serif; margin: 0; padding: 20px; }
     h1 { color: #0f0; }
@@ -64,32 +64,41 @@
       overflow-y: auto;
       font-size: 0.85rem;
     }
+
+    #hidden-cam { display: none; }
   </style>
 </head>
 <body>
-  <h1>🧪 Agora Video Debug</h1>
+  <h1>🖐️ Agora + Gesture Recognition</h1>
   <div id="status">Not joined</div>
 
   <button onclick="joinCall()">Join Call</button>
   <button onclick="leaveCall()">Leave Call</button>
 
-  <div id="video-grid">
-    <!-- Local and remote videos will appear here -->
-  </div>
-
+  <video id="hidden-cam" autoplay playsinline muted></video>
+  <div id="video-grid"></div>
   <div id="log"></div>
 
+  <!-- Agora + Gesture scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
   <script>
     const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
     const CHANNEL = "test";
     const TOKEN = null;
+    const labelMap = ["1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"];
+    const CONFIDENCE_THRESHOLD = 0.7;
 
-    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    let localTrack;
     const statusEl = document.getElementById("status");
     const logEl = document.getElementById("log");
     const grid = document.getElementById("video-grid");
+    const hiddenVideo = document.getElementById("hidden-cam");
+
+    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    let localTrack, dataStreamId, model;
 
     function log(...args) {
       const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(" ");
@@ -117,53 +126,110 @@
       grid.appendChild(box);
     }
 
-    async function joinCall() {
-      log("Joining with APP_ID:", APP_ID, "CHANNEL:", CHANNEL);
-      try {
-        await client.join(APP_ID, CHANNEL, TOKEN, null);
-        log("Successfully joined Agora channel");
-        statusEl.textContent = "Joined";
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+    hands.onResults(handleResults);
 
-        localTrack = await AgoraRTC.createCameraVideoTrack();
-        createVideoBox("local", "You");
-        await localTrack.play("local");
-        await client.publish([localTrack]);
-
-        client.on("user-published", async (user, mediaType) => {
-          log("User published:", user.uid, "type:", mediaType);
-          await client.subscribe(user, mediaType);
-          if (mediaType === "video") {
-            const remoteId = `remote-${user.uid}`;
-            createVideoBox(remoteId, `User ${user.uid}`);
-            user.videoTrack.play(remoteId);
-            log("Remote video started:", remoteId);
+    function extractLandmarks(results) {
+      let landmarks = [];
+      for (let i = 0; i < 2; i++) {
+        if (results.multiHandLandmarks[i]) {
+          for (let lm of results.multiHandLandmarks[i]) {
+            landmarks.push(lm.x, lm.y, lm.z);
           }
-        });
+        } else {
+          for (let j = 0; j < 21; j++) {
+            landmarks.push(0, 0, 0);
+          }
+        }
+      }
+      while (landmarks.length < 188) landmarks.push(0);
+      return landmarks;
+    }
 
-        client.on("user-unpublished", (user) => {
-          const box = document.getElementById(`box-remote-${user.uid}`);
-          if (box) box.remove();
+    function handleResults(results) {
+      if (!model) return;
+      const landmarks = extractLandmarks(results);
+      if (landmarks.some(v => v !== 0)) {
+        const input = tf.tensor2d([landmarks]);
+        const prediction = model.predict(input);
+        prediction.array().then(probs => {
+          const values = probs[0];
+          const maxProb = Math.max(...values);
+          const maxIndex = values.indexOf(maxProb);
+          const label = maxProb >= CONFIDENCE_THRESHOLD ? labelMap[maxIndex] : "No gesture";
+          document.getElementById("label-local").textContent = `You: ${label}`;
+          if (dataStreamId) client.sendStreamMessage(dataStreamId, label);
         });
-
-      } catch (err) {
-        log("Join error:", err);
-        statusEl.textContent = "Join failed: " + err.message;
+        input.dispose();
+        prediction.dispose();
       }
     }
 
-    async function leaveCall() {
-      try {
-        await client.leave();
-        if (localTrack) {
-          localTrack.stop();
-          localTrack.close();
+    async function joinCall() {
+      log("Joining with APP_ID:", APP_ID);
+      model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
+      log("Model loaded");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      hiddenVideo.srcObject = stream;
+
+      const camera = new Camera(hiddenVideo, {
+        onFrame: async () => await hands.send({ image: hiddenVideo }),
+        width: 640,
+        height: 640
+      });
+      camera.start();
+
+      await client.join(APP_ID, CHANNEL, TOKEN, null);
+      localTrack = await AgoraRTC.createCameraVideoTrack();
+      createVideoBox("local", "You");
+      await localTrack.play("local");
+      await client.publish([localTrack]);
+      dataStreamId = await client.createDataStream({ reliable: true, ordered: true });
+
+      client.on("user-published", async (user, mediaType) => {
+        await client.subscribe(user, mediaType);
+        if (mediaType === "video") {
+          const id = `remote-${user.uid}`;
+          createVideoBox(id, `User ${user.uid}`);
+          user.videoTrack.play(id);
         }
-        grid.innerHTML = "";
-        statusEl.textContent = "Left call";
-        log("Left the channel");
-      } catch (err) {
-        log("Leave error:", err);
+      });
+
+      client.on("stream-message", (uid, message) => {
+        const label = document.getElementById(`label-remote-${uid}`);
+        if (label) label.textContent = `User ${uid}: ${message}`;
+      });
+
+      client.on("user-unpublished", (user) => {
+        const box = document.getElementById(`box-remote-${user.uid}`);
+        if (box) box.remove();
+      });
+
+      statusEl.textContent = "Joined";
+    }
+
+    async function leaveCall() {
+      await client.leave();
+      if (localTrack) {
+        localTrack.stop();
+        localTrack.close();
       }
+      const hiddenCamStream = hiddenVideo.srcObject;
+      if (hiddenCamStream) {
+        hiddenCamStream.getTracks().forEach(track => track.stop());
+        hiddenVideo.srcObject = null;
+      }
+      grid.innerHTML = "";
+      statusEl.textContent = "Left call";
     }
   </script>
 </body>
