@@ -3,24 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agora + Gesture Recognition</title>
+  <title>Gesture Video Call</title>
   <style>
-    body { background: #111; color: white; text-align: center; font-family: sans-serif; margin: 0; padding: 20px; }
+    body { background-color: #111; color: white; font-family: Arial, sans-serif; text-align: center; margin: 0; padding: 20px; }
     h1 { color: #0f0; }
+    #status { color: #0f0; margin: 10px; }
     button {
-      padding: 10px 20px;
-      font-size: 1rem;
-      margin: 10px;
-      background: #0f0;
-      border: none;
-      color: #111;
-      font-weight: bold;
-      border-radius: 5px;
-      cursor: pointer;
+      background: #0f0; color: #111; border: none; padding: 10px 20px; font-weight: bold; border-radius: 5px; cursor: pointer; margin: 10px;
     }
     button:hover { background: #0c0; }
-    #status { margin-bottom: 10px; color: #0f0; }
-
     #video-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -28,170 +19,72 @@
       max-width: 1000px;
       margin: auto;
     }
-
     .video-box {
-      background: #000;
-      border: 2px solid #0f0;
-      border-radius: 8px;
       position: relative;
-      width: 100%;
-      aspect-ratio: 4 / 3;
+      background: #000;
+      border-radius: 10px;
       overflow: hidden;
+      aspect-ratio: 1 / 1;
     }
-
-    .video-box video, .video-stream {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+    .video-box video, .video-box .video-stream {
+      width: 100%; height: 100%; object-fit: cover;
     }
-
-    .label {
+    .prediction-label {
       position: absolute;
-      bottom: 0;
-      width: 100%;
-      background: rgba(0,0,0,0.6);
-      color: #0f0;
-      padding: 6px;
-      font-size: 0.9rem;
+      bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.7);
+      color: #0f0; padding: 5px; font-size: 1rem;
     }
-
-    #log {
-      text-align: left;
-      margin-top: 20px;
-      background: #222;
-      padding: 10px;
-      max-height: 200px;
-      overflow-y: auto;
-      font-size: 0.85rem;
-    }
-
     #hidden-cam { display: none; }
   </style>
 </head>
 <body>
-  <h1>🖐️ Agora + Gesture Recognition</h1>
-  <div id="status">Not joined</div>
-
+  <h1>🖐️ Gesture Video Call</h1>
+  <div id="status">Ready</div>
   <button onclick="joinCall()">Join Call</button>
   <button onclick="leaveCall()">Leave Call</button>
-
   <video id="hidden-cam" autoplay playsinline muted></video>
   <div id="video-grid"></div>
-  <div id="log"></div>
 
-  <!-- Agora + Gesture scripts -->
+  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+
+  <!-- App Script -->
   <script>
     const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
     const CHANNEL = "test";
     const TOKEN = null;
-    const labelMap = ["1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"];
+    const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
     const CONFIDENCE_THRESHOLD = 0.7;
 
-    const statusEl = document.getElementById("status");
-    const logEl = document.getElementById("log");
-    const grid = document.getElementById("video-grid");
+    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    const videoGrid = document.getElementById("video-grid");
+    const status = document.getElementById("status");
     const hiddenVideo = document.getElementById("hidden-cam");
 
-    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    let localTrack, dataStreamId, model;
+    let model, localTrack, dataStreamId;
 
-    function log(...args) {
-      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(" ");
-      console.log(...args);
-      logEl.innerHTML += `<div>${msg}</div>`;
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    function createVideoBox(id, label) {
-      const box = document.createElement("div");
-      box.className = "video-box";
-      box.id = `box-${id}`;
-
-      const container = document.createElement("div");
-      container.className = "video-stream";
-      container.id = id;
-
-      const tag = document.createElement("div");
-      tag.className = "label";
-      tag.id = `label-${id}`;
-      tag.textContent = label;
-
-      box.appendChild(container);
-      box.appendChild(tag);
-      grid.appendChild(box);
-    }
-
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
-    hands.onResults(handleResults);
-
-    function extractLandmarks(results) {
-      let landmarks = [];
-      for (let i = 0; i < 2; i++) {
-        if (results.multiHandLandmarks[i]) {
-          for (let lm of results.multiHandLandmarks[i]) {
-            landmarks.push(lm.x, lm.y, lm.z);
-          }
-        } else {
-          for (let j = 0; j < 21; j++) {
-            landmarks.push(0, 0, 0);
-          }
-        }
-      }
-      while (landmarks.length < 188) landmarks.push(0);
-      return landmarks;
-    }
-
-    function handleResults(results) {
-      if (!model) return;
-      const landmarks = extractLandmarks(results);
-      if (landmarks.some(v => v !== 0)) {
-        const input = tf.tensor2d([landmarks]);
-        const prediction = model.predict(input);
-        prediction.array().then(probs => {
-          const values = probs[0];
-          const maxProb = Math.max(...values);
-          const maxIndex = values.indexOf(maxProb);
-          const label = maxProb >= CONFIDENCE_THRESHOLD ? labelMap[maxIndex] : "No gesture";
-          document.getElementById("label-local").textContent = `You: ${label}`;
-          if (dataStreamId) client.sendStreamMessage(dataStreamId, label);
-        });
-        input.dispose();
-        prediction.dispose();
-      }
-    }
+    const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.onResults(onResults);
 
     async function joinCall() {
-      log("Joining with APP_ID:", APP_ID);
+      status.textContent = "Loading model...";
       model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
-      log("Model loaded");
+      status.textContent = "Starting camera...";
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       hiddenVideo.srcObject = stream;
+      const cam = new Camera(hiddenVideo, { onFrame: async () => await hands.send({ image: hiddenVideo }), width: 640, height: 480 });
+      cam.start();
 
-      const camera = new Camera(hiddenVideo, {
-        onFrame: async () => await hands.send({ image: hiddenVideo }),
-        width: 640,
-        height: 640
-      });
-      camera.start();
-
+      status.textContent = "Joining call...";
       await client.join(APP_ID, CHANNEL, TOKEN, null);
       localTrack = await AgoraRTC.createCameraVideoTrack();
       createVideoBox("local", "You");
-      await localTrack.play("local");
+      localTrack.play("local");
       await client.publish([localTrack]);
       dataStreamId = await client.createDataStream({ reliable: true, ordered: true });
 
@@ -209,12 +102,54 @@
         if (label) label.textContent = `User ${uid}: ${message}`;
       });
 
-      client.on("user-unpublished", (user) => {
-        const box = document.getElementById(`box-remote-${user.uid}`);
-        if (box) box.remove();
-      });
+      status.textContent = "In Call";
+    }
 
-      statusEl.textContent = "Joined";
+    function createVideoBox(id, labelText) {
+      const box = document.createElement("div");
+      box.className = "video-box";
+      box.id = `box-${id}`;
+
+      const stream = document.createElement("div");
+      stream.className = "video-stream";
+      stream.id = id;
+
+      const label = document.createElement("div");
+      label.className = "prediction-label";
+      label.id = `label-${id}`;
+      label.textContent = labelText;
+
+      box.appendChild(stream);
+      box.appendChild(label);
+      videoGrid.appendChild(box);
+    }
+
+    function onResults(results) {
+      if (!model) return;
+      const landmarks = [];
+      for (let i = 0; i < 2; i++) {
+        if (results.multiHandLandmarks[i]) {
+          for (let lm of results.multiHandLandmarks[i]) {
+            landmarks.push(lm.x, lm.y, lm.z);
+          }
+        } else {
+          for (let j = 0; j < 21; j++) landmarks.push(0, 0, 0);
+        }
+      }
+      while (landmarks.length < 188) landmarks.push(0);
+      if (landmarks.some(v => v !== 0)) {
+        const input = tf.tensor2d([landmarks]);
+        const prediction = model.predict(input);
+        prediction.array().then(data => {
+          const maxVal = Math.max(...data[0]);
+          const maxIndex = data[0].indexOf(maxVal);
+          const label = maxVal >= CONFIDENCE_THRESHOLD ? labelMap[maxIndex] : "No gesture";
+          document.getElementById("label-local").textContent = `You: ${label}`;
+          if (dataStreamId) client.sendStreamMessage(dataStreamId, label);
+        });
+        input.dispose();
+        prediction.dispose();
+      }
     }
 
     async function leaveCall() {
@@ -228,8 +163,8 @@
         hiddenCamStream.getTracks().forEach(track => track.stop());
         hiddenVideo.srcObject = null;
       }
-      grid.innerHTML = "";
-      statusEl.textContent = "Left call";
+      videoGrid.innerHTML = "";
+      status.textContent = "Left call";
     }
   </script>
 </body>
