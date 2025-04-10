@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF- />
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Gesture Recognition + Video Call</title>
   <style>
@@ -10,99 +10,270 @@
       color: white;
       font-family: Arial, sans-serif;
       text-align: center;
-      padding: 10px;
+      padding: 20px;
+      margin: 0;
     }
-    #video-container {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 10px;
-    }
-    .video-box {
-      position: relative;
-      width: 320px;
-      height: 240px;
-    }
-    .video-box video,
-    .video-box div[id^="remote-"],
-    #webcam {
-      width: 100%;
-      height: 100%;
-      border: 3px solid #00ff00;
-      border-radius: 10px;
-    }
-    .prediction-label {
-      position: absolute;
-      bottom: -28px;
-      left: 0;
-      width: 100%;
-      font-size: 1rem;
+
+    h1 {
       color: #0f0;
+      margin-bottom: 10px;
     }
-    #output {
-      margin-top: 20px;
-      font-size: 1.5rem;
+
+    #status {
       color: #0f0;
+      margin-bottom: 20px;
     }
+
     #controls {
-      margin: 20px;
+      margin-bottom: 20px;
     }
+
     button {
       padding: 10px 20px;
-      margin: 5px;
+      margin: 0 10px;
       font-size: 1rem;
       background-color: #0f0;
+      color: #111;
       border: none;
       border-radius: 5px;
+      font-weight: bold;
       cursor: pointer;
     }
+
     button:hover {
       background-color: #0c0;
     }
-    #webcam {
-      width: 320px;
-      height: 240px;
+
+    #video-container {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .video-box {
       position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1; /* square layout */
+      background-color: #000;
+      border-radius: 8px;
       overflow: hidden;
     }
+
+    .video-box video,
+    .video-box .video-stream {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+
+    .prediction-label {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      padding: 6px;
+      font-size: 1rem;
+      background: rgba(0, 0, 0, 0.7);
+      color: #0f0;
+    }
+
     #hidden-cam {
       display: none;
+    }
+
+    @media (max-width: 768px) {
+      #video-container {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>🖐️ Gesture Recognition + Agora Video Call</h1>
+  <h1>🖐️ Gesture Video Call</h1>
+  <div id="status">Ready to join</div>
 
   <div id="controls">
     <button onclick="joinCall()">Join Call</button>
     <button onclick="leaveCall()">Leave Call</button>
   </div>
 
-  <div id="video-container">
-    <!-- Local video -->
-    <div class="video-box" id="local-box">
-      <div id="webcam"></div>
-      <div class="prediction-label" id="local-label">You: <span id="prediction">Loading...</span></div>
-    </div>
-    <!-- Remote users will be added dynamically -->
-    <div id="remote-container"></div>
-  </div>
+  <div id="video-container"></div>
 
-  <!-- Hidden video used by MediaPipe for gesture recognition -->
+  <!-- Hidden webcam for MediaPipe -->
   <video id="hidden-cam" autoplay playsinline muted></video>
 
-  <!-- TFJS -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
-
-  <!-- MediaPipe Hands -->
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
-  <!-- Agora SDK -->
   <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 
-  <!-- App logic -->
-  <script src="js/script1.js"></script>
+  <!-- Script -->
+  <script>
+    const labelMap = [
+      "1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R",
+      "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"
+    ];
+    const CONFIDENCE_THRESHOLD = 0.7;
+
+    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
+    const CHANNEL = "test";
+    const TOKEN = null;
+
+    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+    const videoContainer = document.getElementById("video-container");
+    const statusDiv = document.getElementById("status");
+    const hiddenVideo = document.getElementById("hidden-cam");
+
+    let model, localTrack, dataStreamId;
+
+    const hands = new Hands({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
+    });
+    hands.onResults(onHandResults);
+
+    function extractLandmarks(results) {
+      let landmarks = [];
+      for (let i = 0; i < 2; i++) {
+        if (results.multiHandLandmarks[i]) {
+          for (let lm of results.multiHandLandmarks[i]) {
+            landmarks.push(lm.x, lm.y, lm.z);
+          }
+        } else {
+          for (let j = 0; j < 21; j++) {
+            landmarks.push(0, 0, 0);
+          }
+        }
+      }
+      while (landmarks.length < 188) landmarks.push(0);
+      return landmarks.slice(0, 188);
+    }
+
+    async function joinCall() {
+      try {
+        statusDiv.textContent = "Loading model...";
+        model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
+        statusDiv.textContent = "Starting camera...";
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        hiddenVideo.srcObject = stream;
+
+        const camera = new Camera(hiddenVideo, {
+          onFrame: async () => {
+            await hands.send({ image: hiddenVideo });
+          },
+          width: 640,
+          height: 640,
+        });
+        camera.start();
+
+        statusDiv.textContent = "Joining Agora...";
+        await client.join(APP_ID, CHANNEL, TOKEN, null);
+
+        localTrack = await AgoraRTC.createCameraVideoTrack();
+        const localBox = createVideoBox("You");
+        localTrack.play(localBox.videoEl);
+        await client.publish([localTrack]);
+
+        dataStreamId = await client.createDataStream({ reliable: true, ordered: true });
+
+        client.on("user-published", async (user, mediaType) => {
+          await client.subscribe(user, mediaType);
+          if (mediaType === "video") {
+            const remoteBox = createVideoBox(`User ${user.uid}`);
+            user.videoTrack.play(remoteBox.videoEl);
+          }
+        });
+
+        client.on("stream-message", (uid, message) => {
+          const label = document.getElementById(`label-${uid}`);
+          if (label) label.textContent = `User ${uid}: ${message}`;
+        });
+
+        client.on("user-unpublished", (user) => {
+          const box = document.getElementById(`user-${user.uid}`);
+          if (box) box.remove();
+        });
+
+        statusDiv.textContent = "In call ✔";
+      } catch (err) {
+        console.error(err);
+        statusDiv.textContent = "Failed to join";
+      }
+    }
+
+    function createVideoBox(labelText) {
+      const uid = labelText === "You" ? "local" : labelText.split(" ")[1];
+
+      const box = document.createElement("div");
+      box.className = "video-box";
+      box.id = `user-${uid}`;
+
+      const videoEl = document.createElement("div");
+      videoEl.className = "video-stream";
+      const label = document.createElement("div");
+      label.className = "prediction-label";
+      label.id = `label-${uid}`;
+      label.textContent = `${labelText}: Loading...`;
+
+      box.appendChild(videoEl);
+      box.appendChild(label);
+      videoContainer.appendChild(box);
+
+      return { box, videoEl };
+    }
+
+    function onHandResults(results) {
+      const landmarks = extractLandmarks(results);
+      if (landmarks.some(val => val !== 0)) {
+        const input = tf.tensor2d([landmarks]);
+        const prediction = model.predict(input);
+        prediction.array().then((probs) => {
+          const values = probs[0];
+          const maxProb = Math.max(...values);
+          const maxIndex = values.indexOf(maxProb);
+          const label = maxProb >= CONFIDENCE_THRESHOLD ? labelMap[maxIndex] : "No gesture";
+
+          const myLabel = document.getElementById("label-local");
+          if (myLabel) myLabel.textContent = `You: ${label}`;
+
+          if (dataStreamId) {
+            client.sendStreamMessage(dataStreamId, label);
+          }
+        });
+        input.dispose();
+        prediction.dispose();
+      }
+    }
+
+    async function leaveCall() {
+      await client.leave();
+
+      if (localTrack) {
+        localTrack.stop();
+        localTrack.close();
+      }
+
+      const hiddenCamStream = hiddenVideo.srcObject;
+      if (hiddenCamStream) {
+        hiddenCamStream.getTracks().forEach(track => track.stop());
+        hiddenVideo.srcObject = null;
+      }
+
+      videoContainer.innerHTML = "";
+      statusDiv.textContent = "Left call";
+    }
+  </script>
 </body>
 </html>

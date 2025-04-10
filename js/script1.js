@@ -12,7 +12,7 @@ const labelMap = [
   let model;
   let dataStreamId;
   let localTrack;
-  const APP_ID = "YOUR_AGORA_APP_ID";
+  const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
   const CHANNEL = "gesture-room";
   const TOKEN = null;
   const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
