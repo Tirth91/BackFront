@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF- />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Gesture Recognition + Video Call</title>
+  <style>
+    body {
+      background-color: #111;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 10px;
+    }
+    #video-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+    .video-box {
+      position: relative;
+      width: 320px;
+      height: 240px;
+    }
+    .video-box video,
+    .video-box div[id^="remote-"],
+    #webcam {
+      width: 100%;
+      height: 100%;
+      border: 3px solid #00ff00;
+      border-radius: 10px;
+    }
+    .prediction-label {
+      position: absolute;
+      bottom: -28px;
+      left: 0;
+      width: 100%;
+      font-size: 1rem;
+      color: #0f0;
+    }
+    #output {
+      margin-top: 20px;
+      font-size: 1.5rem;
+      color: #0f0;
+    }
+    #controls {
+      margin: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 1rem;
+      background-color: #0f0;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0c0;
+    }
+    #webcam {
+      width: 320px;
+      height: 240px;
+      position: relative;
+      overflow: hidden;
+    }
+    #hidden-cam {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>🖐️ Gesture Recognition + Agora Video Call</h1>
+
+  <div id="controls">
+    <button onclick="joinCall()">Join Call</button>
+    <button onclick="leaveCall()">Leave Call</button>
+  </div>
+
+  <div id="video-container">
+    <!-- Local video -->
+    <div class="video-box" id="local-box">
+      <div id="webcam"></div>
+      <div class="prediction-label" id="local-label">You: <span id="prediction">Loading...</span></div>
+    </div>
+    <!-- Remote users will be added dynamically -->
+    <div id="remote-container"></div>
+  </div>
+
+  <!-- Hidden video used by MediaPipe for gesture recognition -->
+  <video id="hidden-cam" autoplay playsinline muted></video>
+
+  <!-- TFJS -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+
+  <!-- MediaPipe Hands -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <!-- Agora SDK -->
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+
+  <!-- App logic -->
+  <script src="js/script.js"></script>
+</body>
+</html>
