@@ -8,13 +8,14 @@ const PREDICTION_INTERVAL = 500;
 
 const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
+const hiddenVideo = document.getElementById("hidden-cam");
 const videoGrid = document.getElementById("video-grid");
 const participantCount = document.getElementById("participant-count");
 const leaveBtn = document.getElementById("leave-btn");
 const roomIdInput = document.getElementById("room-id-input");
 const status = document.getElementById("status");
 
-let model, localTrack, localUid;
+let model, localTrack, localUid, streamId;
 let participants = new Set();
 let lastPredictionTime = 0;
 
@@ -33,20 +34,13 @@ async function joinCall() {
   model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
 
   const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  hiddenVideo.srcObject = stream;
 
-  // Create video element for gesture detection
-  const gestureVideo = document.createElement("video");
-  gestureVideo.srcObject = stream;
-  gestureVideo.muted = true;
-  gestureVideo.playsInline = true;
-  gestureVideo.play();
-
-  // Start gesture detection
-  const cam = new Camera(gestureVideo, {
+  const cam = new Camera(hiddenVideo, {
     onFrame: async () => {
       const now = Date.now();
       if (now - lastPredictionTime > PREDICTION_INTERVAL) {
-        await hands.send({ image: gestureVideo });
+        await hands.send({ image: hiddenVideo });
         lastPredictionTime = now;
       }
     },
@@ -55,11 +49,10 @@ async function joinCall() {
   });
   cam.start();
 
-  // Create Agora video track from stream
-  localTrack = await AgoraRTC.createCameraVideoTrack({ videoSource: stream.getVideoTracks()[0] });
-
   status.textContent = "Joining call...";
   localUid = await client.join(APP_ID, CHANNEL, TOKEN, null);
+  streamId = client.createStreamMessage(); // ✅ Fixed: create stream message channel
+  localTrack = await AgoraRTC.createCameraVideoTrack();
   await client.publish([localTrack]);
 
   createVideoBox("local", "You");
@@ -183,7 +176,7 @@ function sendGesture(gesture) {
       type: "gesture",
       gesture: gesture
     }));
-    client.sendStreamMessage(localUid, msg);
+    client.sendStreamMessage(streamId, msg); // ✅ FIXED: use streamId instead of localUid
   } catch (err) {
     console.error("Failed to send gesture", err);
   }
@@ -193,6 +186,8 @@ async function leaveCall() {
   await client.leave();
   localTrack?.stop();
   localTrack?.close();
+  hiddenVideo.srcObject?.getTracks().forEach(track => track.stop());
+  hiddenVideo.srcObject = null;
   videoGrid.innerHTML = "";
   participants.clear();
   updateParticipantCount();
