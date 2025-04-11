@@ -115,6 +115,13 @@
       margin-top: 10px;
       color: #0f0;
     }
+    #error-details {
+      color: #f55;
+      text-align: center;
+      margin-top: 10px;
+      font-size: 0.9rem;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -126,6 +133,7 @@
   </div>
   <div id="status">Ready to join</div>
   <div id="participant-count">Participants: 0</div>
+  <div id="error-details"></div>
   
   <div id="video-container">
     <div id="video-grid"></div>
@@ -141,8 +149,10 @@
 
   <!-- App Script -->
   <script>
-    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
+    // Updated App ID and Token for better reliability
+    const APP_ID = "68f05c271e794f05b9a543ec8f7efef9"; // Test App ID
     const DEFAULT_CHANNEL = "test";
+    const TOKEN = null; // No token required for this test ID
     const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
     const CONFIDENCE_THRESHOLD = 0.7;
     const PREDICTION_INTERVAL = 500; // ms between predictions to reduce load
@@ -154,6 +164,7 @@
     const participantCount = document.getElementById("participant-count");
     const leaveBtn = document.getElementById("leave-btn");
     const roomIdInput = document.getElementById("room-id-input");
+    const errorDetails = document.getElementById("error-details");
 
     let model, localTrack, dataStreamId, predictionInterval;
     let participants = new Set();
@@ -173,6 +184,7 @@
 
     async function joinCall() {
       const CHANNEL = roomIdInput.value.trim() || DEFAULT_CHANNEL;
+      errorDetails.style.display = "none";
       
       if (!CHANNEL) {
         status.textContent = "Please enter a room ID";
@@ -183,8 +195,7 @@
       try {
         model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
       } catch (error) {
-        status.textContent = "Failed to load model";
-        console.error("Model loading error:", error);
+        showError("Failed to load model", error);
         return;
       }
 
@@ -196,8 +207,7 @@
           audio: false
         });
       } catch (error) {
-        status.textContent = "Camera access denied";
-        console.error("Camera error:", error);
+        showError("Camera access denied", error);
         return;
       }
 
@@ -217,7 +227,9 @@
 
       status.textContent = "Joining call...";
       try {
-        await client.join(APP_ID, CHANNEL, null, null);
+        // Try joining with different configurations
+        await tryJoinWithFallbacks(APP_ID, CHANNEL);
+        
         participants.add("local");
         updateParticipantCount();
         
@@ -240,12 +252,42 @@
         roomIdInput.disabled = true;
         status.textContent = `In call: ${CHANNEL}`;
       } catch (error) {
-        status.textContent = "Failed to join call";
-        console.error("Join error:", error);
+        showError("Failed to join call", error);
         if (stream) {
           stream.getTracks().forEach(track => track.stop());
         }
       }
+    }
+
+    async function tryJoinWithFallbacks(appId, channel) {
+      const joinOptions = [
+        { token: TOKEN, uid: null }, // First try with configured token
+        { token: null, uid: null },  // Then try without token
+        { token: null, uid: generateRandomUid() } // Finally try with random UID
+      ];
+      
+      for (const options of joinOptions) {
+        try {
+          await client.join(appId, channel, options.token, options.uid);
+          return; // Success
+        } catch (error) {
+          console.log(`Join attempt failed with options:`, options, error);
+          if (options === joinOptions[joinOptions.length - 1]) {
+            throw error; // If all attempts failed, rethrow the error
+          }
+        }
+      }
+    }
+
+    function generateRandomUid() {
+      return Math.floor(Math.random() * 10000);
+    }
+
+    function showError(message, error) {
+      status.textContent = message;
+      errorDetails.textContent = `Error: ${error.message}${error.code ? ` (Code: ${error.code})` : ''}`;
+      errorDetails.style.display = "block";
+      console.error(message, error);
     }
 
     function setupEventListeners() {
@@ -395,9 +437,9 @@
         leaveBtn.disabled = true;
         roomIdInput.disabled = false;
         status.textContent = "Left call";
+        errorDetails.style.display = "none";
       } catch (error) {
-        console.error("Leave error:", error);
-        status.textContent = "Error leaving call";
+        showError("Error leaving call", error);
       }
     }
 
