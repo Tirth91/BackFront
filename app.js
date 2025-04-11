@@ -16,6 +16,7 @@ const roomIdInput = document.getElementById("room-id-input");
 const status = document.getElementById("status");
 
 let model, localTrack, localUid, streamId;
+let dataStream;
 let participants = new Set();
 let lastPredictionTime = 0;
 
