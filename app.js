@@ -1,14 +1,13 @@
-const APP_ID = "2a25041a57024e289c67c36418eace00";
+const APP_ID = "2a25041a57024e289c67c36418eace00"; // Replace with your Agora App ID
 const TOKEN = null;
 const DEFAULT_CHANNEL = "test";
 
-const labelMap = ["1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"];
+const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
 const CONFIDENCE_THRESHOLD = 0.7;
 const PREDICTION_INTERVAL = 500;
 
 const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
-const hiddenVideo = document.getElementById("hidden-cam");
 const videoGrid = document.getElementById("video-grid");
 const participantCount = document.getElementById("participant-count");
 const leaveBtn = document.getElementById("leave-btn");
@@ -16,7 +15,6 @@ const roomIdInput = document.getElementById("room-id-input");
 const status = document.getElementById("status");
 
 let model, localTrack, localUid;
-let dataStream;
 let participants = new Set();
 let lastPredictionTime = 0;
 
@@ -35,13 +33,20 @@ async function joinCall() {
   model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
 
   const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-  hiddenVideo.srcObject = stream;
 
-  const cam = new Camera(hiddenVideo, {
+  // Create video element for gesture detection
+  const gestureVideo = document.createElement("video");
+  gestureVideo.srcObject = stream;
+  gestureVideo.muted = true;
+  gestureVideo.playsInline = true;
+  gestureVideo.play();
+
+  // Start gesture detection
+  const cam = new Camera(gestureVideo, {
     onFrame: async () => {
       const now = Date.now();
       if (now - lastPredictionTime > PREDICTION_INTERVAL) {
-        await hands.send({ image: hiddenVideo });
+        await hands.send({ image: gestureVideo });
         lastPredictionTime = now;
       }
     },
@@ -50,13 +55,11 @@ async function joinCall() {
   });
   cam.start();
 
+  // Create Agora video track from stream
+  localTrack = await AgoraRTC.createCameraVideoTrack({ videoSource: stream.getVideoTracks()[0] });
+
   status.textContent = "Joining call...";
   localUid = await client.join(APP_ID, CHANNEL, TOKEN, null);
-
-  // ✅ FIXED: create a proper data stream
-  dataStream = await client.createDataStream({ reliable: true, ordered: true });
-
-  localTrack = await AgoraRTC.createCameraVideoTrack();
   await client.publish([localTrack]);
 
   createVideoBox("local", "You");
@@ -180,7 +183,7 @@ function sendGesture(gesture) {
       type: "gesture",
       gesture: gesture
     }));
-    dataStream.send(msg); // ✅ use valid dataStream object
+    client.sendStreamMessage(localUid, msg);
   } catch (err) {
     console.error("Failed to send gesture", err);
   }
@@ -190,8 +193,6 @@ async function leaveCall() {
   await client.leave();
   localTrack?.stop();
   localTrack?.close();
-  hiddenVideo.srcObject?.getTracks().forEach(track => track.stop());
-  hiddenVideo.srcObject = null;
   videoGrid.innerHTML = "";
   participants.clear();
   updateParticipantCount();
