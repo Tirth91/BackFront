@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Agora Group Call</title>
+  <title>Agora Zoom-Style Video Call + Gesture</title>
   <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
   <style>
     body {
       font-family: sans-serif;
@@ -34,11 +35,24 @@
       border-radius: 10px;
       overflow: hidden;
     }
+
+    .prediction {
+      position: absolute;
+      bottom: 5px;
+      left: 5px;
+      right: 5px;
+      text-align: center;
+      color: #fff;
+      font-weight: bold;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 2px;
+      font-size: 1rem;
+    }
   </style>
 </head>
 <body>
 
-  <h2>Agora Zoom-Style Video Call</h2>
+  <h2>Agora + Gesture Recognition</h2>
 
   <div id="controls">
     <input id="channel" type="text" placeholder="Enter Channel Name" />
@@ -48,19 +62,34 @@
 
   <div id="video-grid"></div>
 
+  <canvas id="gesture-canvas" width="224" height="224" style="display:none;"></canvas>
+
   <script>
-    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851"; // Replace this with your Agora App ID
-    const TOKEN = null; // Use a token only if your app needs it
+    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851"; // Replace with your Agora App ID
+    const TOKEN = null;
     let CHANNEL = "";
 
     let client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     let localTracks = { videoTrack: null, audioTrack: null };
     let localUid = null;
     const remoteUsers = {};
+    let gestureModel = null;
+
+    const labelMap = [
+      "1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R",
+      "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"
+    ];
+
+    async function loadGestureModel() {
+      gestureModel = await tf.loadGraphModel("landmark_model_tfjs/model.json");
+      console.log("Gesture model loaded.");
+    }
 
     async function join() {
       CHANNEL = document.getElementById("channel").value;
       if (!CHANNEL) return alert("Enter a channel name");
+
+      await loadGestureModel();
 
       await client.join(APP_ID, CHANNEL, TOKEN, null);
 
@@ -77,6 +106,8 @@
       client.on("user-published", handleUserPublished);
       client.on("user-unpublished", handleUserUnpublished);
       client.on("user-left", handleUserLeft);
+
+      startGestureDetection(localTracks.videoTrack);
     }
 
     async function leave() {
@@ -98,6 +129,15 @@
       const box = document.createElement("div");
       box.id = `user-${uid}`;
       box.className = "video-box";
+
+      if (isLocal) {
+        const predText = document.createElement("div");
+        predText.className = "prediction";
+        predText.id = "gesture-label";
+        predText.innerText = "Gesture: ...";
+        box.appendChild(predText);
+      }
+
       document.getElementById("video-grid").appendChild(box);
     }
 
@@ -130,6 +170,35 @@
     function handleUserLeft(user) {
       removeVideoBox(user.uid);
       delete remoteUsers[user.uid];
+    }
+
+    function startGestureDetection(videoTrack) {
+      const canvas = document.getElementById("gesture-canvas");
+      const ctx = canvas.getContext("2d");
+      const videoElement = document.createElement("video");
+      videoElement.playsInline = true;
+      videoElement.muted = true;
+
+      const stream = new MediaStream([videoTrack.getMediaStreamTrack()]);
+      videoElement.srcObject = stream;
+      videoElement.play();
+
+      async function detect() {
+        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        const input = tf.browser.fromPixels(canvas).expandDims(0).toFloat().div(255);
+
+        const prediction = await gestureModel.predict(input).data();
+        const maxIndex = prediction.indexOf(Math.max(...prediction));
+        const label = labelMap[maxIndex];
+
+        const labelDiv = document.getElementById("gesture-label");
+        if (labelDiv) labelDiv.innerText = `Gesture: ${label}`;
+
+        tf.dispose(input);
+        requestAnimationFrame(detect);
+      }
+
+      detect();
     }
   </script>
 
