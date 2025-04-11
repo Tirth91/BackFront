@@ -1,56 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Gesture Video Call</title>
   <style>
     body {
-      background: #111;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-align: center;
+      font-family: sans-serif;
+      margin: 0;
+      background: #121212;
+      color: #fff;
     }
-    #videos {
+    #controls {
+      padding: 1em;
       display: flex;
       justify-content: center;
-      gap: 20px;
+      gap: 10px;
       flex-wrap: wrap;
-      margin-top: 20px;
+    }
+    #room-id-input {
+      padding: 0.5em;
+      font-size: 1em;
+    }
+    #video-grid {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1em;
+      padding: 1em;
     }
     .video-box {
-      background: #222;
-      padding: 10px;
+      background: #1e1e1e;
       border-radius: 10px;
+      overflow: hidden;
+      padding: 0.5em;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
-    video {
-      width: 300px;
-      height: 225px;
-      border-radius: 10px;
+    .video-stream {
+      width: 320px;
+      height: 240px;
+      background: black;
     }
-    .gesture-label {
+    .user-name,
+    .prediction-label {
+      text-align: center;
+      margin-top: 5px;
+    }
+    .prediction-label {
+      font-size: 1.1em;
       font-weight: bold;
-      margin-top: 10px;
+    }
+    #status,
+    #participant-count {
+      text-align: center;
+      margin: 1em 0;
+    }
+    button {
+      padding: 0.5em 1em;
+      font-size: 1em;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
-  <h2>Gesture Video Call</h2>
-  <input id="room-input" placeholder="Enter Room ID">
-  <button onclick="joinCall()">Join</button>
-  <button onclick="leaveCall()">Leave</button>
 
-  <div id="status">In call: <span id="room-name"></span><br>Participants: <span id="user-count">0</span></div>
-  <div id="videos"></div>
+  <div id="controls">
+    <input id="room-id-input" placeholder="Enter Room ID" />
+    <button onclick="joinCall()">Join</button>
+    <button onclick="leaveCall()" id="leave-btn" disabled>Leave</button>
+  </div>
 
-  <!-- Agora SDK -->
-  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
-  <!-- TensorFlow.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
-  <!-- MediaPipe Hands -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <div id="status">Not connected</div>
+  <div id="participant-count">Participants: 0</div>
+  <div id="video-grid"></div>
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-
-  <!-- App -->
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
   <script src="app.js"></script>
+
 </body>
 </html>

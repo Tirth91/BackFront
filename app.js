@@ -1,128 +1,202 @@
-let client;
-let localTrack;
-let localUid;
-let channelName;
-let model;
-const labelMap = ["1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"];
+const APP_ID = "2a25041a57024e289c67c36418eace00"; // Replace with your Agora App ID
+const TOKEN = null;
+const DEFAULT_CHANNEL = "test";
 
-const users = {};
+const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
+const CONFIDENCE_THRESHOLD = 0.7;
+const PREDICTION_INTERVAL = 500;
+
+const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+const videoGrid = document.getElementById("video-grid");
+const participantCount = document.getElementById("participant-count");
+const leaveBtn = document.getElementById("leave-btn");
+const roomIdInput = document.getElementById("room-id-input");
+const status = document.getElementById("status");
+
+let model, localTrack, localUid;
+let participants = new Set();
+let lastPredictionTime = 0;
+
+const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7,
+});
+hands.onResults(onResults);
 
 async function joinCall() {
-  channelName = document.getElementById("room-input").value;
-  document.getElementById("room-name").innerText = channelName;
+  const CHANNEL = roomIdInput.value.trim() || DEFAULT_CHANNEL;
+  status.textContent = "Loading model...";
+  model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
 
-  client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-  await client.join("YOUR_AGORA_APP_ID", channelName, null, null);
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
 
-  localTrack = await AgoraRTC.createCameraVideoTrack();
-  localUid = client.uid;
+  // Create video element for gesture detection
+  const gestureVideo = document.createElement("video");
+  gestureVideo.srcObject = stream;
+  gestureVideo.muted = true;
+  gestureVideo.playsInline = true;
+  gestureVideo.play();
 
-  addVideoElement(localUid, "You");
+  // Start gesture detection
+  const cam = new Camera(gestureVideo, {
+    onFrame: async () => {
+      const now = Date.now();
+      if (now - lastPredictionTime > PREDICTION_INTERVAL) {
+        await hands.send({ image: gestureVideo });
+        lastPredictionTime = now;
+      }
+    },
+    width: 640,
+    height: 480,
+  });
+  cam.start();
 
-  localTrack.play(`video-${localUid}`);
-  client.publish([localTrack]);
+  // Create Agora video track from stream
+  localTrack = await AgoraRTC.createCameraVideoTrack({ videoSource: stream.getVideoTracks()[0] });
 
-  const dataStream = await client.createDataStream();
+  status.textContent = "Joining call...";
+  localUid = await client.join(APP_ID, CHANNEL, TOKEN, null);
+  await client.publish([localTrack]);
 
+  createVideoBox("local", "You");
+  localTrack.play("local");
+  participants.add("local");
+  updateParticipantCount();
+  setupListeners();
+
+  leaveBtn.disabled = false;
+  roomIdInput.disabled = true;
+  status.textContent = `In call: ${CHANNEL}`;
+}
+
+function setupListeners() {
   client.on("user-published", async (user, mediaType) => {
     await client.subscribe(user, mediaType);
     if (mediaType === "video") {
-      addVideoElement(user.uid, `User ${user.uid}`);
-      user.videoTrack.play(`video-${user.uid}`);
+      const id = `remote-${user.uid}`;
+      createVideoBox(id, `User ${user.uid}`);
+      user.videoTrack.play(id);
+      participants.add(id);
+      updateParticipantCount();
     }
   });
 
-  client.on("user-unpublished", (user) => {
-    document.getElementById(`container-${user.uid}`)?.remove();
+  client.on("user-unpublished", user => {
+    const id = `remote-${user.uid}`;
+    document.getElementById(`box-${id}`)?.remove();
+    participants.delete(id);
+    updateParticipantCount();
+  });
+
+  client.on("user-left", user => {
+    const id = `remote-${user.uid}`;
+    document.getElementById(`box-${id}`)?.remove();
+    participants.delete(id);
+    updateParticipantCount();
   });
 
   client.on("stream-message", (uid, message) => {
-    const msg = JSON.parse(new TextDecoder().decode(message));
-    if (msg.type === "gesture") {
-      const gestureEl = document.getElementById(`gesture-${uid}`);
-      if (gestureEl) gestureEl.innerText = `Gesture: ${msg.gesture}`;
+    try {
+      const { type, gesture } = JSON.parse(new TextDecoder().decode(message));
+      if (type === "gesture") {
+        const label = document.getElementById(`label-remote-${uid}`);
+        if (label) label.textContent = `Gesture: ${gesture}`;
+      }
+    } catch (err) {
+      console.warn("Invalid message format", err);
     }
   });
-
-  await loadModel();
-  startGesturePrediction(dataStream);
 }
 
-function leaveCall() {
-  client.leave();
-  window.location.reload();
+function createVideoBox(id, name) {
+  if (document.getElementById(`box-${id}`)) return;
+
+  const box = document.createElement("div");
+  box.className = "video-box";
+  box.id = `box-${id}`;
+
+  const stream = document.createElement("div");
+  stream.className = "video-stream";
+  stream.id = id;
+
+  const nameLabel = document.createElement("div");
+  nameLabel.className = "user-name";
+  nameLabel.textContent = name;
+
+  const predictionLabel = document.createElement("div");
+  predictionLabel.className = "prediction-label";
+  predictionLabel.id = id === "local" ? "label-local" : `label-remote-${id.split("-")[1]}`;
+  predictionLabel.textContent = "Gesture: None";
+
+  box.appendChild(stream);
+  box.appendChild(nameLabel);
+  box.appendChild(predictionLabel);
+  videoGrid.appendChild(box);
 }
 
-function addVideoElement(uid, name) {
-  if (document.getElementById(`container-${uid}`)) return;
-  const container = document.createElement("div");
-  container.className = "video-box";
-  container.id = `container-${uid}`;
-  container.innerHTML = `
-    <div><video id="video-${uid}" autoplay muted playsinline></video></div>
-    <div>${name}</div>
-    <div id="gesture-${uid}" class="gesture-label">Gesture: None</div>
-  `;
-  document.getElementById("videos").appendChild(container);
-  updateUserCount();
+function updateParticipantCount() {
+  participantCount.textContent = `Participants: ${participants.size}`;
 }
 
-function updateUserCount() {
-  document.getElementById("user-count").innerText =
-    document.querySelectorAll(".video-box").length;
-}
+function onResults(results) {
+  if (!model) return;
 
-async function loadModel() {
-  model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
-}
+  const landmarks = [];
+  for (let i = 0; i < 2; i++) {
+    if (results.multiHandLandmarks[i]) {
+      for (const lm of results.multiHandLandmarks[i]) {
+        landmarks.push(lm.x, lm.y, lm.z);
+      }
+    } else {
+      for (let j = 0; j < 21; j++) landmarks.push(0, 0, 0);
+    }
+  }
 
-function startGesturePrediction(dataStream) {
-  const videoEl = document.createElement("video");
-  videoEl.setAttribute("autoplay", "");
-  videoEl.setAttribute("muted", "");
-  videoEl.setAttribute("playsinline", "");
-  videoEl.style.display = "none";
-  document.body.appendChild(videoEl);
+  while (landmarks.length < 188) landmarks.push(0);
 
-  navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
-    videoEl.srcObject = stream;
-    const camera = new Camera(videoEl, {
-      onFrame: async () => {
-        await hands.send({ image: videoEl });
-      },
-      width: 640,
-      height: 480,
+  if (landmarks.some(v => v !== 0)) {
+    const input = tf.tensor2d([landmarks]);
+    const prediction = model.predict(input);
+
+    prediction.array().then(data => {
+      const maxVal = Math.max(...data[0]);
+      const maxIdx = data[0].indexOf(maxVal);
+      const gesture = maxVal > CONFIDENCE_THRESHOLD ? labelMap[maxIdx] : "None";
+
+      document.getElementById("label-local").textContent = `Gesture: ${gesture}`;
+      sendGesture(gesture);
+    }).catch(err => console.error("Prediction error:", err))
+    .finally(() => {
+      input.dispose();
+      prediction.dispose();
     });
-    camera.start();
-  });
+  }
+}
 
-  const hands = new Hands({
-    locateFile: (file) =>
-      `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-  });
+function sendGesture(gesture) {
+  try {
+    const msg = new TextEncoder().encode(JSON.stringify({
+      type: "gesture",
+      gesture: gesture
+    }));
+    client.sendStreamMessage(localUid, msg);
+  } catch (err) {
+    console.error("Failed to send gesture", err);
+  }
+}
 
-  hands.setOptions({
-    maxNumHands: 1,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.7,
-    minTrackingConfidence: 0.7,
-  });
-
-  hands.onResults((results) => {
-    if (results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0]
-        .map((lm) => [lm.x, lm.y, lm.z])
-        .flat();
-      const input = tf.tensor([landmarks]);
-      const prediction = model.predict(input);
-      const predictedIndex = prediction.argMax(-1).dataSync()[0];
-      const gesture = labelMap[predictedIndex];
-
-      document.getElementById(`gesture-${localUid}`).innerText = `Gesture: ${gesture}`;
-      const msg = new TextEncoder().encode(
-        JSON.stringify({ type: "gesture", gesture })
-      );
-      dataStream.send(msg);
-    }
-  });
+async function leaveCall() {
+  await client.leave();
+  localTrack?.stop();
+  localTrack?.close();
+  videoGrid.innerHTML = "";
+  participants.clear();
+  updateParticipantCount();
+  leaveBtn.disabled = true;
+  roomIdInput.disabled = false;
+  status.textContent = "Left call";
 }
