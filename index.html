@@ -66,6 +66,9 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    #hidden-cam {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -79,6 +82,9 @@
   <div id="status">Not connected</div>
   <div id="participant-count">Participants: 0</div>
   <div id="video-grid"></div>
+
+  <!-- Hidden camera for gesture detection -->
+  <video id="hidden-cam" autoplay muted playsinline></video>
 
   <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
