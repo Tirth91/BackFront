@@ -1,8 +1,8 @@
-const APP_ID = "2a25041a57024e289c67c36418eace00"; // Replace with your Agora App ID
+const APP_ID = "2a25041a57024e289c67c36418eace00";
 const TOKEN = null;
 const DEFAULT_CHANNEL = "test";
 
-const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
+const labelMap = ["1L", "1R", "2L", "2R", "3L", "3R", "4L", "4R", "5R", "6L", "6R", "7L", "7R", "8L", "8R", "9L", "9R", "A", "B", "C", "D", "L"];
 const CONFIDENCE_THRESHOLD = 0.7;
 const PREDICTION_INTERVAL = 500;
 
@@ -15,7 +15,7 @@ const leaveBtn = document.getElementById("leave-btn");
 const roomIdInput = document.getElementById("room-id-input");
 const status = document.getElementById("status");
 
-let model, localTrack, localUid, streamId;
+let model, localTrack, localUid;
 let dataStream;
 let participants = new Set();
 let lastPredictionTime = 0;
@@ -52,7 +52,10 @@ async function joinCall() {
 
   status.textContent = "Joining call...";
   localUid = await client.join(APP_ID, CHANNEL, TOKEN, null);
-  streamId = client.createStreamMessage(); // ✅ Fixed: create stream message channel
+
+  // ✅ FIXED: create a proper data stream
+  dataStream = await client.createDataStream({ reliable: true, ordered: true });
+
   localTrack = await AgoraRTC.createCameraVideoTrack();
   await client.publish([localTrack]);
 
@@ -177,7 +180,7 @@ function sendGesture(gesture) {
       type: "gesture",
       gesture: gesture
     }));
-    client.sendStreamMessage(streamId, msg); // ✅ FIXED: use streamId instead of localUid
+    dataStream.send(msg); // ✅ use valid dataStream object
   } catch (err) {
     console.error("Failed to send gesture", err);
   }
