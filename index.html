@@ -1,171 +1,137 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gesture Video Call</title>
+  <meta charset="UTF-8">
+  <title>Agora Group Call</title>
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
   <style>
-    body { background-color: #111; color: white; font-family: Arial, sans-serif; text-align: center; margin: 0; padding: 20px; }
-    h1 { color: #0f0; }
-    #status { color: #0f0; margin: 10px; }
-    button {
-      background: #0f0; color: #111; border: none; padding: 10px 20px; font-weight: bold; border-radius: 5px; cursor: pointer; margin: 10px;
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f4f4f4;
     }
-    button:hover { background: #0c0; }
+
+    h2 {
+      margin-bottom: 10px;
+    }
+
+    #controls {
+      margin-bottom: 10px;
+    }
+
     #video-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-      max-width: 1000px;
-      margin: auto;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 10px;
     }
+
     .video-box {
-      position: relative;
       background: #000;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      position: relative;
       border-radius: 10px;
       overflow: hidden;
-      aspect-ratio: 1 / 1;
     }
-    .video-box video, .video-box .video-stream {
-      width: 100%; height: 100%; object-fit: cover;
-    }
-    .prediction-label {
-      position: absolute;
-      bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.7);
-      color: #0f0; padding: 5px; font-size: 1rem;
-    }
-    #hidden-cam { display: none; }
   </style>
 </head>
 <body>
-  <h1>🖐️ Gesture Video Call</h1>
-  <div id="status">Ready</div>
-  <button onclick="joinCall()">Join Call</button>
-  <button onclick="leaveCall()">Leave Call</button>
-  <video id="hidden-cam" autoplay playsinline muted></video>
+
+  <h2>Agora Zoom-Style Video Call</h2>
+
+  <div id="controls">
+    <input id="channel" type="text" placeholder="Enter Channel Name" />
+    <button onclick="join()">Join</button>
+    <button onclick="leave()">Leave</button>
+  </div>
+
   <div id="video-grid"></div>
 
-  <!-- Libraries -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-
-  <!-- App Script -->
   <script>
-    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851";
-    const CHANNEL = "test";
-    const TOKEN = null;
-    const labelMap = ["1L","1R","2L","2R","3L","3R","4L","4R","5R","6L","6R","7L","7R","8L","8R","9L","9R","A","B","C","D","L"];
-    const CONFIDENCE_THRESHOLD = 0.7;
+    const APP_ID = "0f3fde8ae17c4048bcfc8d69286bc851"; // Replace this with your Agora App ID
+    const TOKEN = null; // Use a token only if your app needs it
+    let CHANNEL = "";
 
-    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    const videoGrid = document.getElementById("video-grid");
-    const status = document.getElementById("status");
-    const hiddenVideo = document.getElementById("hidden-cam");
+    let client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    let localTracks = { videoTrack: null, audioTrack: null };
+    let localUid = null;
+    const remoteUsers = {};
 
-    let model, localTrack, dataStreamId;
+    async function join() {
+      CHANNEL = document.getElementById("channel").value;
+      if (!CHANNEL) return alert("Enter a channel name");
 
-    const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-    hands.onResults(onResults);
-
-    async function joinCall() {
-      status.textContent = "Loading model...";
-      model = await tf.loadLayersModel("landmark_model_tfjs/model.json");
-      status.textContent = "Starting camera...";
-
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      hiddenVideo.srcObject = stream;
-      const cam = new Camera(hiddenVideo, { onFrame: async () => await hands.send({ image: hiddenVideo }), width: 640, height: 480 });
-      cam.start();
-
-      status.textContent = "Joining call...";
       await client.join(APP_ID, CHANNEL, TOKEN, null);
-      localTrack = await AgoraRTC.createCameraVideoTrack();
-      createVideoBox("local", "You");
-      localTrack.play("local");
-      await client.publish([localTrack]);
-      dataStreamId = await client.createDataStream({ reliable: true, ordered: true });
 
-      client.on("user-published", async (user, mediaType) => {
-        await client.subscribe(user, mediaType);
-        if (mediaType === "video") {
-          const id = `remote-${user.uid}`;
-          createVideoBox(id, `User ${user.uid}`);
-          user.videoTrack.play(id);
-        }
-      });
+      localTracks.audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      localTracks.videoTrack = await AgoraRTC.createCameraVideoTrack();
 
-      client.on("stream-message", (uid, message) => {
-        const label = document.getElementById(`label-remote-${uid}`);
-        if (label) label.textContent = `User ${uid}: ${message}`;
-      });
+      localUid = client.uid;
+      addVideoBox(localUid, true);
+      localTracks.videoTrack.play(`user-${localUid}`);
 
-      status.textContent = "In Call";
+      await client.publish(Object.values(localTracks));
+      console.log("Published local tracks");
+
+      client.on("user-published", handleUserPublished);
+      client.on("user-unpublished", handleUserUnpublished);
+      client.on("user-left", handleUserLeft);
     }
 
-    function createVideoBox(id, labelText) {
-      const box = document.createElement("div");
-      box.className = "video-box";
-      box.id = `box-${id}`;
-
-      const stream = document.createElement("div");
-      stream.className = "video-stream";
-      stream.id = id;
-
-      const label = document.createElement("div");
-      label.className = "prediction-label";
-      label.id = `label-${id}`;
-      label.textContent = labelText;
-
-      box.appendChild(stream);
-      box.appendChild(label);
-      videoGrid.appendChild(box);
-    }
-
-    function onResults(results) {
-      if (!model) return;
-      const landmarks = [];
-      for (let i = 0; i < 2; i++) {
-        if (results.multiHandLandmarks[i]) {
-          for (let lm of results.multiHandLandmarks[i]) {
-            landmarks.push(lm.x, lm.y, lm.z);
-          }
-        } else {
-          for (let j = 0; j < 21; j++) landmarks.push(0, 0, 0);
+    async function leave() {
+      for (let trackName in localTracks) {
+        const track = localTracks[trackName];
+        if (track) {
+          track.stop();
+          track.close();
         }
       }
-      while (landmarks.length < 188) landmarks.push(0);
-      if (landmarks.some(v => v !== 0)) {
-        const input = tf.tensor2d([landmarks]);
-        const prediction = model.predict(input);
-        prediction.array().then(data => {
-          const maxVal = Math.max(...data[0]);
-          const maxIndex = data[0].indexOf(maxVal);
-          const label = maxVal >= CONFIDENCE_THRESHOLD ? labelMap[maxIndex] : "No gesture";
-          document.getElementById("label-local").textContent = `You: ${label}`;
-          if (dataStreamId) client.sendStreamMessage(dataStreamId, label);
-        });
-        input.dispose();
-        prediction.dispose();
-      }
-    }
 
-    async function leaveCall() {
       await client.leave();
-      if (localTrack) {
-        localTrack.stop();
-        localTrack.close();
+      document.getElementById("video-grid").innerHTML = "";
+      console.log("Left channel");
+    }
+
+    function addVideoBox(uid, isLocal = false) {
+      if (document.getElementById(`user-${uid}`)) return;
+      const box = document.createElement("div");
+      box.id = `user-${uid}`;
+      box.className = "video-box";
+      document.getElementById("video-grid").appendChild(box);
+    }
+
+    function removeVideoBox(uid) {
+      const el = document.getElementById(`user-${uid}`);
+      if (el) el.remove();
+    }
+
+    async function handleUserPublished(user, mediaType) {
+      await client.subscribe(user, mediaType);
+      console.log("Subscribed to user:", user.uid);
+
+      addVideoBox(user.uid);
+
+      if (mediaType === "video") {
+        user.videoTrack.play(`user-${user.uid}`);
       }
-      const hiddenCamStream = hiddenVideo.srcObject;
-      if (hiddenCamStream) {
-        hiddenCamStream.getTracks().forEach(track => track.stop());
-        hiddenVideo.srcObject = null;
+
+      if (mediaType === "audio") {
+        user.audioTrack.play();
       }
-      videoGrid.innerHTML = "";
-      status.textContent = "Left call";
+
+      remoteUsers[user.uid] = user;
+    }
+
+    function handleUserUnpublished(user) {
+      removeVideoBox(user.uid);
+    }
+
+    function handleUserLeft(user) {
+      removeVideoBox(user.uid);
+      delete remoteUsers[user.uid];
     }
   </script>
+
 </body>
 </html>
